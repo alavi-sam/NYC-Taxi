@@ -2,3 +2,4 @@
 .venv/
 *.zip
 *.parquet
+claude_knowledge/
