@@ -2,4 +2,6 @@
 .venv/
 *.zip
 *.parquet
+claude.md
 claude_knowledge/
+.claude_hooks
