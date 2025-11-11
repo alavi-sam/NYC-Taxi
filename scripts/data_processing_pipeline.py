@@ -4,11 +4,13 @@ This script processes NYC taxi trip data for fare prediction modeling using Duck
 """
 
 import duckdb
+import polars as pl
 
 
 # Configuration
 RAW_DATA_PATH = "data/raw/*.csv"  # or "data/raw/Yellow_Taxi_Trip_Data.csv"
 DB_PATH = "taxi_data.db"
+OUTPUT_PARQUET = 'data/processed/cleaned_data.parquet'
 
 
 def main():
@@ -26,8 +28,7 @@ def main():
     
     con.execute(
         f"""
-        CREATE TABLE
-            IF NOT EXISTS raw_data AS
+        CREATE OR REPLACE TABLE raw_data AS
         SELECT
             *
         FROM
@@ -45,14 +46,15 @@ def main():
 
     con.execute(
         """
-        CREATE TABLE
-            IF NOT EXISTS valid_transactions AS
+        CREATE OR REPLACE TABLE valid_transactions AS
         SELECT
             *
         FROM
             raw_data
         WHERE
-            payment_type != 0
+            payment_type != 0;
+
+        drop table raw_data;
         """
     )
 
@@ -67,14 +69,14 @@ def main():
 
     con.execute(
         """
-        create table 
-            if not exists cleaned_transactions as
+        CREATE OR REPLACE TABLE cleaned_transactions AS
         select
             *
         from
             valid_transactions
         where
             total_amount > 0
+            and fare_amount > 0
             and trip_distance > 0
             and payment_type <> 3
             and year (tpep_pickup_datetime) = 2023;
@@ -91,8 +93,7 @@ def main():
 
     con.execute(
         """
-        create table
-            if not exists filtered_transactions as
+        CREATE OR REPLACE TABLE filtered_transactions AS
         select
             row_number() over (
                 order by
@@ -116,29 +117,18 @@ def main():
 
     print('STEP 5: Fix MTA tax')
 
-    print(con.execute(
-        """
-        select count(*) from filtered_transactions
-        where mta_tax = 0 and DOLocationID not in (1, 265);
-        """
-    ).fetchall())
 
     con.execute(
         """
         UPDATE filtered_transactions
-        SET mta_tax = 0.50, total_amount = total_amount + 0.50
-        WHERE DOLocationID NOT IN (1, 265)
-        AND mta_tax = 0;
+        SET
+            mta_tax = 0.50,
+            total_amount = total_amount + 0.50
+        WHERE
+            DOLocationID NOT IN (1, 265)
+            AND mta_tax = 0;
         """
     )
-
-    print(con.execute(
-        """
-        select count(*) from filtered_transactions
-        where mta_tax = 0 and DOLocationID not in (1, 265);
-        """
-    ).fetchall())
-
 
     # ============================================================================
     # STEP 6: Fix improvement surcharge
@@ -147,27 +137,16 @@ def main():
 
     print('STEP 6: Fix improvement surcharge')
 
-    print(con.execute(
-        """
-        select count(*) from filtered_transactions
-        where improvement_surcharge = 0.30;
-        """
-    ).fetchall())
-
     con.execute(
         """
         UPDATE filtered_transactions
-        SET improvement_surcharge = 1.00, total_amount = total_amount + 0.70
-        WHERE improvement_surcharge = 0.30;
+        SET
+            improvement_surcharge = 1.00,
+            total_amount = total_amount + 0.70
+        WHERE
+            improvement_surcharge = 0.30;
         """
     )
-
-    print(con.execute(
-        """
-        select count(*) from filtered_transactions
-        where improvement_surcharge = 0.30;
-        """
-    ).fetchall())
 
     # ============================================================================
     # STEP 7: Calculate congestion surcharge
@@ -240,58 +219,57 @@ def main():
     # ============================================================================
     # STEP 9: Extract temporal features
     # ============================================================================
-    # TODO: Create function to extract datetime features using DuckDB date functions
-    # Features to extract from tpep_pickup_datetime:
-    #   - year (YEAR())
-    #   - month (MONTH())
-    #   - day_of_week (DAYOFWEEK() or EXTRACT(DOW))
-    #   - hour (HOUR())
-    #   - is_weekend (CASE WHEN day_of_week IN (6, 7) THEN 1 ELSE 0)
-    #   - is_rush_hour (CASE WHEN hour IN (7,8,9,17,18,19) THEN 1 ELSE 0)
 
 
+    print("STEP 9: Extract temporal features")
 
+    con.execute(
+        """
+        CREATE OR REPLACE TABLE cleaned_data AS
+        select
+            *,
+            year (tpep_pickup_datetime) as travel_year,
+            month (tpep_pickup_datetime) as travel_month,
+            day (tpep_pickup_datetime) as travel_day,
+            hour (tpep_pickup_datetime) as travel_hour,
+            dayofweek (tpep_pickup_datetime) as travel_weekday,
+            case
+                when dayofweek (tpep_pickup_datetime) in (0, 6) then 1
+                else 0
+            end as is_weekend,
+            case
+                when hour (tpep_pickup_datetime) in (7, 8, 9, 17, 18, 19) then 1
+                else 0
+            end as is_rush_hour
+        from
+            filtered_transactions;
 
-
-
-    # ============================================================================
-    # STEP 11: Calculate/validate rush hour extra charge
-    # ============================================================================
-    # TODO: Create function to validate or calculate extra charge based on time
-    # Note: This is based on pickup time and rush hours
-    # Extra charges: $0.50 rush hour, $1.00 overnight (8pm-6am weekdays, 9pm-6am weekends)
-
-
-    # ============================================================================
-    # STEP 12: Create cleaned dataset
-    # ============================================================================
-    # TODO: Create function to create final cleaned table
-    # Select relevant columns, exclude unpredictable ones (tolls_amount, tip_amount)
-    # Keep: VendorID, pickup/dropoff datetime, locations, passenger_count, trip_distance,
-    #       fare_amount, extra, mta_tax, improvement_surcharge, congestion_surcharge,
-    #       airport_fee, total_amount, payment_type, temporal features
-    # Exclude: tolls_amount, tip_amount (not predictable from pickup information)
+        drop table filtered_transactions;
+        """
+    )
 
 
     # ============================================================================
-    # STEP 13: Export cleaned data to parquet
+    # STEP 10: Export cleaned data to parquet
     # ============================================================================
     # TODO: Create function to export cleaned data to single parquet file
-    # con.execute(f"COPY cleaned_data TO '{OUTPUT_PARQUET}' (FORMAT PARQUET, COMPRESSION ZSTD)")
-
-
-    # ============================================================================
-    # STEP 14: Generate data quality report
-    # ============================================================================
-    # TODO: Create function to generate summary statistics
-    # - Row counts (before/after cleaning)
-    # - Missing value counts
-    # - Fare statistics (min, max, avg, median)
-    # - Trip distance statistics
-    # Save report for documentation
-
-
+    con.execute(f"COPY cleaned_data TO '{OUTPUT_PARQUET}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+    con.execute('DROP TABLE cleaned_data;')
     con.close()
+
+
+    # ============================================================================
+    # STEP 11: Generate data quality report
+    # ============================================================================
+    
+    print("STEP 11: Generate data quality report")
+
+    df = pl.read_parquet(OUTPUT_PARQUET)
+    df.describe().write_csv('data_quality_report.csv')
+
+
+
+    
 
 
 # ============================================================================
