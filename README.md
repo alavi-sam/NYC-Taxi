@@ -2,7 +2,7 @@
 
 Machine learning project for analyzing and predicting NYC Yellow Taxi fares using 2023 trip data.
 
-![NYC Traffic Congestion](./image.png)
+![NYC Traffic Congestion](./NYC_congestion_picture.png)
 
 ## Project Overview
 
