@@ -5,3 +5,5 @@
 claude.md
 claude_knowledge/
 .claude_hooks
+setpsTaken.txt
+*.pyc
