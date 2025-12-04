@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from data_loader import create_dataset, normalize_data, preprocess_categorical
-from data_loader import EMBEDDING_FEATURES, NUMERICAL_FEATURES, BINARY_FEATURES, DATA_PATH
+from data_loader import EMBEDDING_FEATURES, NUMERICAL_FEATURES, BINARY_FEATURES, DATA_PATH, BATCH_SIZE
 
 import pickle
 
@@ -87,22 +87,28 @@ def train_model(save_path=SAVE_PATH, epochs=EPOCHS):
 
     model.summary()
 
-    import pyarrow.parquet as pq
-    parquet_file = pq.ParquetFile(DATA_PATH)
-    num_samples = parquet_file.metadata.num_rows
-    print(f'Total samples in dataset: {num_samples:,}')
+    from pyarrow.parquet import ParquetFile
 
-    dataset = create_dataset(
-        file_path=DATA_PATH,
-    )
+    df_train = ParquetFile('./data/processed/train.parquet')
+    train_samples = df_train.metadata.num_rows
 
-    val_samples = int(num_samples * VALIDATION_SIZE)
-    test_samples = int(num_samples * TEST_SIZE)
-    train_samples = num_samples - val_samples - test_samples
+    del df_train
 
-    train_dataset = dataset.take(train_samples).repeat()
-    val_dataset = dataset.skip(train_samples).take(val_samples).repeat()
-    test_dataset = dataset.skip(train_samples + val_samples)
+    df_val = ParquetFile('./data/processed/val.parquet')
+    val_samples = df_val.metadata.num_rows
+
+    del df_val
+
+    df_test = ParquetFile('./data/processed/test.parquet')
+    test_samples = df_test.metadata.num_rows
+
+    del df_test
+
+
+
+    train_dataset = create_dataset('./data/processed/train.parquet')
+    val_dataset = create_dataset('./data/processed/val.parquet')
+    test_dataset = create_dataset('./data/processed/test.parquet')
 
     callbacks = [
     keras.callbacks.ModelCheckpoint(
@@ -128,8 +134,9 @@ def train_model(save_path=SAVE_PATH, epochs=EPOCHS):
 
     print('start training!')
 
-    steps_per_epoch = train_samples // 2048
-    validation_steps = val_samples // 2048
+    steps_per_epoch = train_samples // BATCH_SIZE
+    # Limit validation steps to avoid running out of data
+    validation_steps = val_samples // BATCH_SIZE
 
     print('steps_per_epoch:', steps_per_epoch)
     print('validation_steps:', validation_steps)
@@ -144,7 +151,7 @@ def train_model(save_path=SAVE_PATH, epochs=EPOCHS):
         verbose=1
     )
 
-    test_steps = test_samples // 2048
+    test_steps = test_samples // BATCH_SIZE
     mse, mae, mape = model.evaluate(test_dataset, steps=test_steps)
     print('Mean Squared Error:', mse)
     print('Mean Absolute Error:', mae)
