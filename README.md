@@ -6,7 +6,7 @@ Machine learning project for analyzing and predicting NYC Yellow Taxi fares usin
 
 ## Project Overview
 
-This project performs comprehensive analysis of 34 million NYC Yellow Taxi trips from 2023, with the goal of building a fare prediction model. The pipeline includes data cleaning, exploratory analysis, feature engineering, and preparation for machine learning.
+This project performs comprehensive analysis of 34 million NYC Yellow Taxi trips from 2023, with the goal of building a fare prediction model. The pipeline includes data cleaning, exploratory analysis, feature engineering, and deep learning model training.
 
 ## Dataset
 
@@ -15,7 +15,7 @@ This project performs comprehensive analysis of 34 million NYC Yellow Taxi trips
 - **Period**: 2023 (full year)
 - **Records**: 34,009,543 trips (after outlier removal)
 - **Raw Size**: 3.7GB CSV
-- **Processed Size**: 469MB Parquet
+- **Processed Size**: 1.2GB (train/val/test splits)
 - **Target Variable**: `fare_amount` (metered base fare)
 
 ### Key Statistics
@@ -30,20 +30,24 @@ This project performs comprehensive analysis of 34 million NYC Yellow Taxi trips
 NYC-Taxi/
 ├── data/
 │   ├── raw/                          # Original CSV (3.7GB)
-│   │   └── Yellow_Taxi_Trip_Data.csv
-│   ├── processed/                    # Cleaned Parquet (469MB)
-│   │   └── cleaned_data.parquet
+│   ├── processed/                    # Train/val/test splits (1.2GB)
+│   │   ├── train.parquet             # Training data (572MB)
+│   │   ├── val.parquet               # Validation data (98MB)
+│   │   └── test.parquet              # Test data (98MB)
+│   ├── features/                     # Engineered features
+│   │   └── engineered_features.parquet (572MB)
 │   └── lookups/                      # Reference tables (taxi zones)
 ├── scripts/
 │   ├── data_processing_pipeline.py   # ETL pipeline (DuckDB + Polars)
-│   ├── EDA.ipynb                     # Exploratory data analysis
-│   ├── query_db.py                   # Database query utility
-│   └── test.sql                      # SQL test queries
+│   ├── data_loader.py                # TensorFlow data pipeline
+│   ├── model.py                      # Neural network training
+│   └── query_db.py                   # Database query utility
+├── models/
+│   ├── taxi_fare_model.keras         # Trained model (974KB)
+│   └── normalizer.pkl                # Feature normalizer
 ├── taxi_data.db                      # DuckDB database (420MB)
 ├── data_quality_report.csv           # Validation results
-├── zones_statistics.csv              # Zone-level statistics
-├── image.png                         # NYC congestion visualization
-└── main.py                           # Main entry point
+└── zones_statistics.csv              # Zone-level statistics
 ```
 
 ## Quick Start
@@ -66,7 +70,7 @@ python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install dependencies
-pip install polars pandas duckdb seaborn matplotlib jupyter
+pip install tensorflow polars pandas duckdb pyarrow seaborn matplotlib jupyter
 ```
 
 ### Running the Pipeline
@@ -75,13 +79,19 @@ pip install polars pandas duckdb seaborn matplotlib jupyter
 # 1. Process raw data (ETL pipeline)
 python scripts/data_processing_pipeline.py
 
-# 2. Explore the data
+# 2. Prepare train/val/test splits
+python scripts/data_loader.py
+
+# 3. Train the model
+python scripts/model.py
+
+# 4. Explore the data
 jupyter notebook scripts/EDA.ipynb
 ```
 
 ## Data Processing Pipeline
 
-The ETL pipeline (`data_processing_pipeline.py`) performs:
+The ETL pipeline ([data_processing_pipeline.py](scripts/data_processing_pipeline.py)) performs:
 
 1. **Data Loading**: Reads 3.7GB CSV into DuckDB
 2. **Feature Engineering**: Creates temporal features (hour, weekday, month)
@@ -90,6 +100,49 @@ The ETL pipeline (`data_processing_pipeline.py`) performs:
 5. **Quality Reporting**: Generates data validation reports
 
 **Tech Stack**: DuckDB (SQL engine) + Polars (data manipulation)
+
+## Machine Learning Model
+
+### Architecture
+
+The model uses a **deep neural network with embedding layers** for categorical features:
+
+- **Embedding Features**: Year, month, day, hour, weekday, passenger count, pickup/dropoff locations
+- **Numerical Features**: Trip distance, duration, route mean distance, distance ratio, average speed
+- **Binary Features**: Is weekend, is rush hour
+- **Network**: 3 dense layers (256→128→64) with BatchNorm and Dropout
+- **Output**: Single linear output for fare prediction
+
+### Model Configuration
+
+```python
+BATCH_SIZE = 32,768
+EPOCHS = 10
+VALIDATION_SIZE = 0.15
+TEST_SIZE = 0.15
+```
+
+### Training Features
+
+- **Early Stopping**: Patience of 3 epochs
+- **Learning Rate Reduction**: Factor of 0.5 with patience of 2
+- **Model Checkpointing**: Saves best model based on validation loss
+- **Metrics**: MSE, MAE, MAPE
+
+### Data Pipeline
+
+The [data_loader.py](scripts/data_loader.py) implements efficient TensorFlow data loading:
+
+- Batched Parquet reading (1M rows at a time)
+- Categorical preprocessing (zero-indexing)
+- Feature normalization using sample statistics
+- Data shuffling with configurable buffer
+- Prefetching for optimal GPU utilization
+
+### Model Files
+
+- **taxi_fare_model.keras**: Trained Keras model (974KB)
+- **normalizer.pkl**: Fitted normalization layer for numerical features
 
 ## Key Findings
 
@@ -112,34 +165,40 @@ The ETL pipeline (`data_processing_pipeline.py`) performs:
 ## Feature Engineering
 
 ### Temporal Features
+- `travel_year`: Year
+- `travel_month`: Month (0-11, zero-indexed)
+- `travel_day`: Day of month (0-30, zero-indexed)
 - `travel_hour`: Hour of day (0-23)
 - `travel_weekday`: Day of week (0=Sunday)
-- `travel_month`: Month (1-12)
 - `is_rush_hour`: Boolean for 7-9 AM, 5-7 PM
 - `is_weekend`: Boolean for Saturday/Sunday
 
 ### Trip Features
+- `trip_distance`: Distance in miles
 - `trip_duration`: Duration in minutes
 - `avg_speed`: Miles per minute
-- `fare_per_mile`: $/mile rate
-- `fare_per_minute`: $/minute rate
-
-### Route Features
 - `route_mean_distance`: Average distance for pickup-dropoff pair
 - `distance_ratio`: Actual distance / route average
 
+### Location Features
+- `PULocationID`: Pickup taxi zone (0-264, zero-indexed)
+- `DOLocationID`: Dropoff taxi zone (0-264, zero-indexed)
+- `passenger_count`: Number of passengers (0-9, zero-indexed)
+
 ## Tech Stack
 
-- **Data Processing**: DuckDB, Polars
-- **Analysis**: Pandas (for visualization)
+- **Deep Learning**: TensorFlow 2.x, Keras
+- **Data Processing**: DuckDB, Polars, PyArrow
+- **Analysis**: Pandas
 - **Visualization**: Seaborn, Matplotlib
 - **Storage**: Parquet (Snappy compression)
 - **Notebook**: Jupyter
 
 ## Files Description
 
-- **data_processing_pipeline.py**: Complete ETL pipeline
-- **EDA.ipynb**: Comprehensive exploratory analysis with visualizations
+- [data_processing_pipeline.py](scripts/data_processing_pipeline.py): Complete ETL pipeline
+- [data_loader.py](scripts/data_loader.py): TensorFlow data pipeline with batching and preprocessing
+- [model.py](scripts/model.py): Neural network architecture and training loop
 - **taxi_data.db**: DuckDB database with indexed tables
 - **data_quality_report.csv**: Validation metrics
 - **zones_statistics.csv**: Aggregated zone-level statistics
@@ -156,31 +215,62 @@ The ETL pipeline (`data_processing_pipeline.py`) performs:
 - Missing values handled in preprocessing
 - Temporal features validated (no future dates)
 - Location IDs cross-referenced with taxi zone lookup
+- Train/val/test split: 70%/15%/15%
+
+## Usage Example
+
+```python
+import tensorflow as tf
+from model import predict
+import pandas as pd
+
+# Load trained model
+model = tf.keras.models.load_model('models/taxi_fare_model.keras')
+
+# Prepare sample data
+sample_data = pd.DataFrame({
+    'trip_distance': [2.5],
+    'trip_duration': [15.0],
+    'travel_hour': [17],
+    'travel_weekday': [4],
+    'PULocationID': [161],  # Midtown Manhattan
+    'DOLocationID': [237],  # Upper East Side
+    # ... other features
+})
+
+# Predict fare
+predicted_fare = predict(model, sample_data)
+print(f"Predicted fare: ${predicted_fare[0]:.2f}")
+```
 
 ## Future Work
 
-### Machine Learning Models
-- [ ] Baseline: Linear Regression
-- [ ] Tree-based: XGBoost, LightGBM
-- [ ] Deep Learning: Neural networks with embeddings
+### Model Improvements
+- [ ] Hyperparameter tuning (learning rate, layer sizes, dropout)
+- [ ] Alternative architectures (XGBoost, LightGBM)
+- [ ] Ensemble methods
+- [ ] Cross-validation
 
 ### Additional Features
 - [ ] Cyclical encoding (sin/cos for temporal features)
-- [ ] Airport indicators
-- [ ] Borough-to-borough features
+- [ ] Airport indicators (JFK, LaGuardia, Newark flags)
+- [ ] Borough-to-borough route features
 - [ ] Weather data integration
+- [ ] Traffic congestion indicators
 
 ### Deployment
 - [ ] FastAPI endpoint for predictions
-- [ ] Streamlit dashboard
+- [ ] Streamlit dashboard for interactive exploration
 - [ ] Docker containerization
+- [ ] Model versioning with MLflow
 
 ## Performance Notes
 
-- **Memory-efficient**: Uses lazy evaluation with Polars
-- **Fast queries**: DuckDB in-memory engine
+- **Memory-efficient**: Batched data loading handles 34M+ records
+- **Fast training**: GPU-accelerated with TensorFlow
 - **Compressed storage**: Parquet reduces size by 87%
 - **Scalable**: Pipeline can handle years of data
+- **Optimized I/O**: Prefetching and parallel data loading
 
 ## References
 
