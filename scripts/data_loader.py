@@ -3,8 +3,11 @@ from tensorflow import keras
 import polars as pl
 import numpy as np
 import pyarrow.parquet as pq
+import random
 
 DATA_PATH = "data/features/engineered_features.parquet"
+
+BATCH_SIZE = 4096*8
 
 NUMERICAL_FEATURES = [
     'trip_distance',
@@ -33,6 +36,25 @@ EMBEDDING_FEATURES = {
 }
 
 
+
+def train_test_split(dataset_path, val_size=0.15, test_size=0.15):
+    df = pl.read_parquet(dataset_path)
+    num_samples = len(df)
+    val_samples = int(num_samples * val_size)
+    test_samples = int(num_samples * test_size)
+    train_samples = num_samples - val_samples - test_samples
+
+    df_test = df.sample(fraction=test_size, shuffle=True, with_replacement=False)
+    df_val = df.sample(fraction=val_size, shuffle=True, with_replacement=False)
+    df_train = df
+
+    df_test.write_parquet('data/processed/test.parquet')
+    df_val.write_parquet('data/processed/val.parquet')
+    df_train.write_parquet('data/processed/train.parquet')
+
+
+
+
 def preprocess_categorical(batch):
     if 'travel_month' in batch.columns and batch['travel_month'].min() >= 1:
         batch['travel_month'] -= 1
@@ -59,7 +81,7 @@ def normalize_data(file_path, numerical_features, sample_size=1_000_000):
     normalization_layer.adapt(df[numerical_features].to_numpy())
     return normalization_layer
 
-def create_dataset(file_path, batch_size=2048, shuffle=True, buffer_size=2048*5):
+def create_dataset(file_path, batch_size=BATCH_SIZE, shuffle=True, buffer_size=BATCH_SIZE  *5):
     def data_generator():
         df = pq.ParquetFile(file_path)
         num_rows = df.metadata.num_rows
@@ -67,12 +89,12 @@ def create_dataset(file_path, batch_size=2048, shuffle=True, buffer_size=2048*5)
         processed_rows = 0
         batch_idx = 0
 
-        for batch in df.iter_batches(batch_size=buffer_size):
+        for batch in df.iter_batches(batch_size=1000000):
             
             batch = batch.to_pandas()
             batch = preprocess_categorical(batch)
             
-            batch.dropna(subset=[TARGET_COLUMN], inplace=True)
+            batch = batch.dropna(subset=[TARGET_COLUMN])
 
             embedding_data = {}
 
@@ -87,8 +109,8 @@ def create_dataset(file_path, batch_size=2048, shuffle=True, buffer_size=2048*5)
             processed_rows += len(batch)
             batch_idx += 1
 
-            for i in range(0, buffer_size, batch_size):
-                end_idx = min(i + batch_size, buffer_size)
+            for i in range(0, len(y), batch_size):
+                end_idx = min(i + batch_size, len(y))
                 features = {
                     **{col: embedding_data[col][i:end_idx] for col in EMBEDDING_FEATURES.keys()},
                     'numerical_input': numerical_data[i:end_idx],
@@ -116,31 +138,12 @@ def create_dataset(file_path, batch_size=2048, shuffle=True, buffer_size=2048*5)
         dataset = dataset.shuffle(buffer_size=buffer_size)
         dataset = dataset.batch(batch_size)
 
-    dataset = dataset.prefetch(buffer_size=buffer_size)
+    dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
     return dataset
 
 
-        
-
-
-
-
-
-
             
-
-
-            
-
-            
-
-            
-
-        
-        
-
-
-
-
-
+if __name__ == '__main__':
+    train_test_split(DATA_PATH)
+    
