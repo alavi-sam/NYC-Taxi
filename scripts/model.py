@@ -106,8 +106,8 @@ def train_model(save_path=SAVE_PATH, epochs=EPOCHS):
 
 
 
-    train_dataset = create_dataset('./data/processed/train.parquet')
-    val_dataset = create_dataset('./data/processed/val.parquet')
+    train_dataset = create_dataset('./data/processed/train.parquet').repeat()
+    val_dataset = create_dataset('./data/processed/val.parquet').repeat()
     test_dataset = create_dataset('./data/processed/test.parquet')
 
     callbacks = [
@@ -135,7 +135,6 @@ def train_model(save_path=SAVE_PATH, epochs=EPOCHS):
     print('start training!')
 
     steps_per_epoch = train_samples // BATCH_SIZE
-    # Limit validation steps to avoid running out of data
     validation_steps = val_samples // BATCH_SIZE
 
     print('steps_per_epoch:', steps_per_epoch)
@@ -195,11 +194,4 @@ if __name__ == '__main__':
     print('sample predictions:')
     print('actual fares:', sample_data['fare_amount'].values)
     print('predicted fares:', predictions)
-
-
-
-
-    
-
-
     
